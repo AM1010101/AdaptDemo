@@ -3,13 +3,14 @@ import httpx
 from httpx import AsyncClient, Response
 import json
 from supabase import create_client, Client
-from secret_keys import SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, FOXWAY_SUPABASE_ID, FOXWAY_API_KEY 
+from config import get_settings
 
 app = FastAPI()
+settings = get_settings()
 
 
 def get_supabase_client() -> Client:
-    return create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+    return create_client(settings.SUPABASE_URL, settings.SUPABASE_SERVICE_ROLE_KEY)
 
 @app.get("/")
 async def root():
@@ -42,7 +43,7 @@ async def scrape_foxway(manufacturer:str, partial_vat:bool):
     }
     headers = {
         "accept": "text/plain",
-        "X-ApiKey": FOXWAY_API_KEY,
+        "X-ApiKey": settings.FOXWAY_API_KEY,
     }
 
     async with httpx.AsyncClient() as client:
@@ -124,15 +125,10 @@ async def write_scrape_to_supabase(manufacturer:str, partial_vat:bool, data:dict
         "Mpn": "51092LYY"
     },'''
 
-    
+    insert_rows = []
+    # print(f"Processing item {manufacturer} for partial_vat {partial_vat} ----------------")
     for line,i in zip(foxway_data, range(len(foxway_data))):
-        # this is each individual item
-        # print(line)
-        # if i > 10:
-        #     print("Processed 10 items, stopping for demonstration purposes.")
-        #     break
-        print(f"Processing item {i} ----------------")
-            
+
         # Find the grade value in the Dimension list robustly
         grade = next((d["Value"] for d in line.get("Dimension", []) if d.get("Key", "").lower() == "appearance"), None)
         
@@ -179,9 +175,8 @@ async def write_scrape_to_supabase(manufacturer:str, partial_vat:bool, data:dict
         for make in makes:
             model = model.replace(make, "").strip()
             
-        # insert into supabase
-        response = supabase_client.table("raw_product_scrapes").insert({
-            "source_id": FOXWAY_SUPABASE_ID,  # Assuming you have a source ID for Foxway
+        insert_rows.append({
+            "source_id": settings.FOXWAY_SUPABASE_ID,  # Assuming you have a source ID for Foxway
             "make": manufacturer, 
             "model": model,
             "storage_capacity": storage,  # This is hardcoded, adjust as needed
@@ -193,9 +188,13 @@ async def write_scrape_to_supabase(manufacturer:str, partial_vat:bool, data:dict
             "trade_in_price": None,  # Adjust if you have this data
             "stock_count": line["Quantity"],
             "meta_data": json.dumps(line)  # Store the entire item as metadata
-        }).execute()
+        })
+    
+            # insert into supabase
+    response = supabase_client.table("raw_product_scrapes").insert(insert_rows).execute()
             
 
+            
 
 @app.get("/scrape_all_foxway")
 async def scrape_all_foxway():
@@ -204,6 +203,7 @@ async def scrape_all_foxway():
     for manufacturer in manufacturers:
         for vat in partial_vat:
             await scrape_foxway(manufacturer, vat)
+    return {"message": "API Scrape Completed"}
     
         
         
