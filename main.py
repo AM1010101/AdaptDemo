@@ -223,13 +223,13 @@ async def scrape_all_foxway(do_scrape: bool = False):
     partial_vat = [True, False]  # Example values for partial VAT
     scrape_instance = uuid.uuid4()  #uuid
     
-    log_to_supabase("info", "Starting scrape for all manufacturers and VAT settings", {"manufacturers": manufacturers, "partial_vat": partial_vat}, source="FastAPI - scrape_all_foxway")
+    log_to_supabase("info", "Starting scrape for all manufacturers and VAT settings", {"manufacturers": manufacturers, "partial_vat": partial_vat, "scrape_instance": scrape_instance}, source="FastAPI - scrape_all_foxway")
     
     for manufacturer in manufacturers:
         for vat in partial_vat:
             await scrape_foxway(manufacturer, vat, scrape_instance)
     
-    log_to_supabase("info", "Completed scrape for all manufacturers and VAT settings", {"manufacturers": manufacturers, "partial_vat": partial_vat}, source="FastAPI - scrape_all_foxway")
+    log_to_supabase("info", "Completed scrape for all manufacturers and VAT settings", {"manufacturers": manufacturers, "partial_vat": partial_vat, "scrape_instance": scrape_instance}, source="FastAPI - scrape_all_foxway")
     
     return {"message": "API Scrape Completed"}
     
