@@ -1,5 +1,6 @@
 from math import log
-from fastapi import FastAPI
+import re
+from fastapi import FastAPI, Request
 import httpx
 from httpx import AsyncClient, Response
 import json
@@ -215,7 +216,7 @@ async def write_scrape_to_supabase(manufacturer:str, partial_vat:bool, data:dict
             
 
 @app.get("/scrape_all_foxway")
-async def scrape_all_foxway(do_scrape: bool = False):
+async def scrape_all_foxway(request:Request, do_scrape: bool = False):
     if not do_scrape:
         log_to_supabase("warning", "Scraping is disabled", {"do_scrape": do_scrape}, source="FastAPI - scrape_all_foxway")
         return {"message": "Scraping is disabled. Set do_scrape to True to enable."}
@@ -223,7 +224,7 @@ async def scrape_all_foxway(do_scrape: bool = False):
     partial_vat = [True, False]  # Example values for partial VAT
     scrape_instance = uuid.uuid4()  #uuid
     
-    log_to_supabase("info", "Starting scrape for all manufacturers and VAT settings", {"manufacturers": manufacturers, "partial_vat": partial_vat, "scrape_instance": str(scrape_instance)}, source="FastAPI - scrape_all_foxway")
+    log_to_supabase("info", "Starting scrape for all manufacturers and VAT settings", {"manufacturers": manufacturers, "partial_vat": partial_vat, "scrape_instance": str(scrape_instance), "request_client": str(request.client)}, source="FastAPI - scrape_all_foxway")
     
     for manufacturer in manufacturers:
         for vat in partial_vat:
