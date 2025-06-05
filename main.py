@@ -4,6 +4,7 @@ from httpx import AsyncClient, Response
 import json
 from supabase import create_client, Client
 from config import get_settings
+from typing import Optional
 
 app = FastAPI()
 settings = get_settings()
@@ -11,6 +12,33 @@ settings = get_settings()
 
 def get_supabase_client() -> Client:
     return create_client(settings.SUPABASE_URL, settings.SUPABASE_SERVICE_ROLE_KEY)
+
+
+log_table = '''
+create table public.logs (
+  id uuid not null default gen_random_uuid (),
+  log_level text not null,
+  message text not null,
+  context jsonb null,
+  created_at timestamp with time zone null default now(),
+  user_id uuid null,
+  source text null,
+  constraint logs_pkey primary key (id),
+  constraint fk_user foreign KEY (user_id) references auth.users (id) on delete set null
+) TABLESPACE pg_default;
+'''
+def log_to_supabase(log_level: str, message: str, context: Optional[dict] = None, user_id: Optional[str] = None, source: Optional[str] = None):
+    supabase_client = get_supabase_client()
+    log_entry = {
+        "log_level": log_level,
+        "message": message,
+        "context": context,
+        "user_id": user_id,
+        "source": source
+    }
+    response = supabase_client.table("logs").insert(log_entry).execute()
+    return response
+
 
 @app.get("/")
 async def root():
@@ -58,6 +86,7 @@ async def scrape_foxway(manufacturer:str, partial_vat:bool):
         file.write(json.dumps(json_data, indent=4))
     
     await write_scrape_to_supabase(manufacturer, partial_vat, json_data)
+
 
 @app.get("/write_scrape_to_supabase")
 async def write_scrape_to_supabase(manufacturer:str, partial_vat:bool, data:dict ):
@@ -194,15 +223,19 @@ async def write_scrape_to_supabase(manufacturer:str, partial_vat:bool, data:dict
     response = supabase_client.table("raw_product_scrapes").insert(insert_rows).execute()
             
 
-            
-
 @app.get("/scrape_all_foxway")
 async def scrape_all_foxway():
     manufacturers = ["huawei", "apple", "samsung"]
     partial_vat = [True, False]  # Example values for partial VAT
+    
+    log_to_supabase("info", "Starting scrape for all manufacturers and VAT settings", {"manufacturers": manufacturers, "partial_vat": partial_vat}, source="FastAPI - scrape_all_foxway")
+    
     for manufacturer in manufacturers:
         for vat in partial_vat:
             await scrape_foxway(manufacturer, vat)
+    
+    log_to_supabase("info", "Completed scrape for all manufacturers and VAT settings", {"manufacturers": manufacturers, "partial_vat": partial_vat}, source="FastAPI - scrape_all_foxway")
+    
     return {"message": "API Scrape Completed"}
     
         
