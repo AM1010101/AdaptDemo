@@ -5,6 +5,7 @@ import json
 from supabase import create_client, Client
 from config import get_settings
 from typing import Optional
+import uuid
 
 app = FastAPI()
 settings = get_settings()
@@ -14,19 +15,6 @@ def get_supabase_client() -> Client:
     return create_client(settings.SUPABASE_URL, settings.SUPABASE_SERVICE_ROLE_KEY)
 
 
-log_table = '''
-create table public.logs (
-  id uuid not null default gen_random_uuid (),
-  log_level text not null,
-  message text not null,
-  context jsonb null,
-  created_at timestamp with time zone null default now(),
-  user_id uuid null,
-  source text null,
-  constraint logs_pkey primary key (id),
-  constraint fk_user foreign KEY (user_id) references auth.users (id) on delete set null
-) TABLESPACE pg_default;
-'''
 def log_to_supabase(log_level: str, message: str, context: Optional[dict] = None, user_id: Optional[str] = None, source: Optional[str] = None):
     supabase_client = get_supabase_client()
     log_entry = {
@@ -46,7 +34,7 @@ async def root():
 
 
 @app.get("/scrape_foxway")
-async def scrape_foxway(manufacturer:str, partial_vat:bool):
+async def scrape_foxway(manufacturer:str, partial_vat:bool, scrape_instance: Optional[uuid.UUID] = None):
     
     # lookup table for manufacturer_id
     manufacturer_ids = {
@@ -85,11 +73,11 @@ async def scrape_foxway(manufacturer:str, partial_vat:bool):
     with open("foxway_data.json", "w") as file:
         file.write(json.dumps(json_data, indent=4))
     
-    await write_scrape_to_supabase(manufacturer, partial_vat, json_data)
+    await write_scrape_to_supabase(manufacturer, partial_vat, json_data, scrape_instance=scrape_instance)
 
 
 @app.get("/write_scrape_to_supabase")
-async def write_scrape_to_supabase(manufacturer:str, partial_vat:bool, data:dict ):
+async def write_scrape_to_supabase(manufacturer:str, partial_vat:bool, data:dict, scrape_instance: Optional[uuid.UUID] = None):
     # read the scraped data from disk
     with open("foxway_data.json", "r") as file:
         foxway_data = json.loads(file.read())
@@ -113,6 +101,7 @@ async def write_scrape_to_supabase(manufacturer:str, partial_vat:bool, data:dict
             trade_in_price numeric(10, 2) null,
             stock_count integer null,
             meta_data text null,
+            scrape_instance uuid null,
             constraint raw_product_scrapes_pkey primary key (scrape_id),
             constraint raw_product_scrapes_source_id_fkey foreign KEY (source_id) references sources (source_id) on delete RESTRICT
         ) TABLESPACE pg_default;
@@ -216,7 +205,8 @@ async def write_scrape_to_supabase(manufacturer:str, partial_vat:bool, data:dict
             "purchase_price": line["Price"],
             "trade_in_price": None,  # Adjust if you have this data
             "stock_count": line["Quantity"],
-            "meta_data": json.dumps(line)  # Store the entire item as metadata
+            "meta_data": json.dumps(line),  # Store the entire item as metadata
+            "scrape_instance": str(scrape_instance) if scrape_instance else None # Use the provided scrape instance or set to None
         })
     
             # insert into supabase
@@ -227,16 +217,16 @@ async def write_scrape_to_supabase(manufacturer:str, partial_vat:bool, data:dict
 async def scrape_all_foxway():
     manufacturers = ["huawei", "apple", "samsung"]
     partial_vat = [True, False]  # Example values for partial VAT
+    scrape_instance = uuid.uuid4()  #uuid
     
     log_to_supabase("info", "Starting scrape for all manufacturers and VAT settings", {"manufacturers": manufacturers, "partial_vat": partial_vat}, source="FastAPI - scrape_all_foxway")
     
     for manufacturer in manufacturers:
         for vat in partial_vat:
-            await scrape_foxway(manufacturer, vat)
+            await scrape_foxway(manufacturer, vat, scrape_instance)
     
     log_to_supabase("info", "Completed scrape for all manufacturers and VAT settings", {"manufacturers": manufacturers, "partial_vat": partial_vat}, source="FastAPI - scrape_all_foxway")
     
     return {"message": "API Scrape Completed"}
     
-        
         
