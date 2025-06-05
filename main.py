@@ -147,8 +147,8 @@ async def write_scrape_to_supabase(manufacturer:str, partial_vat:bool, data:dict
 
     insert_rows = []
     # print(f"Processing item {manufacturer} for partial_vat {partial_vat} ----------------")
-    for line,i in zip(data, range(len(data))):
-
+    for line in data:
+        # print(line)
         # Find the grade value in the Dimension list robustly
         grade = next((d["Value"] for d in line.get("Dimension", []) if d.get("Key", "").lower() == "appearance"), None)
         
@@ -210,9 +210,11 @@ async def write_scrape_to_supabase(manufacturer:str, partial_vat:bool, data:dict
             "meta_data": json.dumps(line),  # Store the entire item as metadata
             "scrape_instance": str(scrape_instance) if scrape_instance else None # Use the provided scrape instance or set to None
         })
+
     
             # insert into supabase
     response = supabase_client.table("raw_product_scrapes").insert(insert_rows).execute()
+    return response
             
 
 @app.get("/scrape_all_foxway")
