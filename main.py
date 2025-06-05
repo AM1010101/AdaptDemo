@@ -1,3 +1,4 @@
+from math import log
 from fastapi import FastAPI
 import httpx
 from httpx import AsyncClient, Response
@@ -216,6 +217,7 @@ async def write_scrape_to_supabase(manufacturer:str, partial_vat:bool, data:dict
 @app.get("/scrape_all_foxway")
 async def scrape_all_foxway(do_scrape: bool = False):
     if not do_scrape:
+        log_to_supabase("warning", "Scraping is disabled", {"do_scrape": do_scrape}, source="FastAPI - scrape_all_foxway")
         return {"message": "Scraping is disabled. Set do_scrape to True to enable."}
     manufacturers = ["huawei", "apple", "samsung"]
     partial_vat = [True, False]  # Example values for partial VAT
