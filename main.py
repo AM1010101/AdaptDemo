@@ -65,14 +65,14 @@ async def scrape_foxway(manufacturer:str, partial_vat:bool, scrape_instance: Opt
 
     async with httpx.AsyncClient() as client:
         response = await client.get(url, params=params, headers=headers)
-        foxway_data = response.text
+        # foxway_data = response.text
     
     json_data = response.json()
     # print(json_data)
     
     # write this json to disk temporarily
-    with open("foxway_data.json", "w") as file:
-        file.write(json.dumps(json_data, indent=4))
+    # with open("foxway_data.json", "w") as file:
+    #     file.write(json.dumps(json_data, indent=4))
     
     await write_scrape_to_supabase(manufacturer, partial_vat, json_data, scrape_instance=scrape_instance)
 
@@ -80,8 +80,8 @@ async def scrape_foxway(manufacturer:str, partial_vat:bool, scrape_instance: Opt
 # @app.get("/write_scrape_to_supabase")
 async def write_scrape_to_supabase(manufacturer:str, partial_vat:bool, data:dict, scrape_instance: Optional[uuid.UUID] = None):
     # read the scraped data from disk
-    with open("foxway_data.json", "r") as file:
-        foxway_data = json.loads(file.read())
+    # with open("foxway_data.json", "r") as file:
+    #     foxway_data = json.loads(file.read())
         
     # we know manufactureer id Huawei is 137 and vat margin is False
     supabase_client = get_supabase_client()
@@ -146,7 +146,7 @@ async def write_scrape_to_supabase(manufacturer:str, partial_vat:bool, data:dict
 
     insert_rows = []
     # print(f"Processing item {manufacturer} for partial_vat {partial_vat} ----------------")
-    for line,i in zip(foxway_data, range(len(foxway_data))):
+    for line,i in zip(data, range(len(data))):
 
         # Find the grade value in the Dimension list robustly
         grade = next((d["Value"] for d in line.get("Dimension", []) if d.get("Key", "").lower() == "appearance"), None)
@@ -223,13 +223,13 @@ async def scrape_all_foxway(do_scrape: bool = False):
     partial_vat = [True, False]  # Example values for partial VAT
     scrape_instance = uuid.uuid4()  #uuid
     
-    log_to_supabase("info", "Starting scrape for all manufacturers and VAT settings", {"manufacturers": manufacturers, "partial_vat": partial_vat, "scrape_instance": scrape_instance}, source="FastAPI - scrape_all_foxway")
+    log_to_supabase("info", "Starting scrape for all manufacturers and VAT settings", {"manufacturers": manufacturers, "partial_vat": partial_vat, "scrape_instance": str(scrape_instance)}, source="FastAPI - scrape_all_foxway")
     
     for manufacturer in manufacturers:
         for vat in partial_vat:
             await scrape_foxway(manufacturer, vat, scrape_instance)
     
-    log_to_supabase("info", "Completed scrape for all manufacturers and VAT settings", {"manufacturers": manufacturers, "partial_vat": partial_vat, "scrape_instance": scrape_instance}, source="FastAPI - scrape_all_foxway")
+    log_to_supabase("info", "Completed scrape for all manufacturers and VAT settings", {"manufacturers": manufacturers, "partial_vat": partial_vat, "scrape_instance": str(scrape_instance)}, source="FastAPI - scrape_all_foxway")
     
     return {"message": "API Scrape Completed"}
     
