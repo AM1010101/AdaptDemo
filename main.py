@@ -1,13 +1,15 @@
-from math import log
-import re
 from fastapi import FastAPI, Request
+import re
 import httpx
-from httpx import AsyncClient, Response
 import json
 from supabase import create_client, Client
 from config import get_settings
 from typing import Optional
 import uuid
+from fastapi.responses import StreamingResponse
+import csv
+import io
+from datetime import datetime
 
 app = FastAPI()
 settings = get_settings()
@@ -207,6 +209,114 @@ async def write_scrape_to_supabase(manufacturer:str, partial_vat:bool, data:dict
     response = supabase_client.table("raw_product_scrapes").insert(insert_rows).execute()
     return response
             
+# Placeholder for a more robust model code generation/lookup
+# This will be the most complex part to get right and will need your detailed rules/mappings
+def get_model_code(make: str, model_name: str) -> str:
+    make_lower = make.lower()
+    model_lower = model_name.lower()
+    
+    # VERY ROUGH initial attempt based on limited examples
+    if "apple" in make_lower and "iphone" in model_lower:
+        match = re.search(r'iphone\s*([\d]+)', model_lower) # Gets numbers like 8, 12, 13
+        if match:
+            return "IP" + match.group(1)
+        # Add more specific Apple rules here (e.g., for SE, Pro, Max, Plus)
+        return "IPXXXX" # Fallback for unhandled Apple models
+
+    elif "samsung" in make_lower and "galaxy" in model_lower:
+        if "s24" in model_lower: # Example: Samsung Galaxy S24
+            return "SAS24D" 
+        elif "s22 ultra" in model_lower: # Example: Samsung Galaxy S22 Ultra 5G Duos
+            return "SS22UD"
+        elif "s20" in model_lower: # Example: Samsung Galaxy S20
+            return "SAS20D" 
+        # Add more specific Samsung rules here
+        return "SAXXXX" # Fallback for unhandled Samsung models
+    
+    # Fallback for other makes or unhandled models
+    # Consider taking first few chars of make and model or a generic code
+    # Ensure the fallback is not too long by default
+    fallback_make = make_lower[:2].upper()
+    fallback_model_cleaned = re.sub(r'[^a-z0-9]', '', model_lower) # Remove non-alphanumeric
+    fallback_model = fallback_model_cleaned[:3].upper()
+    return fallback_make + fallback_model
+
+
+def generate_sku(make: str, model_name: str, storage_capacity: str, colour: str, grade: str) -> str:
+    colour_code_map = {
+        "Blue": "BL", "Black": "BK", "Midnight": "MN", "White": "WH",
+        "Phantom White": "WH", "Green": "GR"
+        # User to add more colour mappings here
+    }
+    grade_code_map = {
+        "A": "AX", "A+": "AA", "B": "BX", "C": "CX"
+        # User to add more grade mappings here
+    }
+
+    # 1. Get Model Code
+    raw_model_code = get_model_code(make if make else "", model_name if model_name else "")
+
+    # 2. Determine Capacity Code
+    cap_code = ""
+    storage_input_str = str(storage_capacity if storage_capacity else "").upper() # Normalize input
+    if "TB" in storage_input_str:
+        num_match = re.search(r'(\d+)', storage_input_str)
+        cap_code = num_match.group(1) if num_match else "X" # e.g. "1" for 1TB
+    elif "GB" in storage_input_str:
+        num_match = re.search(r'(\d+)', storage_input_str)
+        cap_code = num_match.group(1) if num_match else "XXX" # e.g. "64", "128"
+    if not cap_code: # If still empty (e.g. input was just "Unknown Storage" or empty)
+        cap_code = "XXX" # Fallback
+
+    # 3. Determine Colour Code
+    normalized_colour_key = (colour if colour else "").strip() 
+    col_code = "XX" # Default fallback
+    # Case-insensitive lookup for colour
+    for map_key, map_val in colour_code_map.items():
+        if map_key.lower() == normalized_colour_key.lower():
+            col_code = map_val
+            break
+    
+    # 4. Determine Grade Code
+    normalized_grade_key = (grade if grade else "").strip()
+    grd_code = "XX" # Default fallback
+    # Case-insensitive lookup for grade
+    for map_key, map_val in grade_code_map.items():
+        if map_key.lower() == normalized_grade_key.lower(): # Compare normalized keys
+            grd_code = map_val
+            break
+
+    # 5. Assemble SKU with Padding
+    prefix = "M-"
+    
+    model_code_segment = prefix + raw_model_code.upper()
+    suffix_segment = cap_code.upper() + col_code.upper() + grd_code.upper()
+    
+    padding_len = 15 - (len(model_code_segment) + len(suffix_segment))
+    
+    padding_segment = ""
+    if padding_len > 0:
+        padding_segment = "X" * padding_len
+    elif padding_len < 0:
+        # Components are too long, truncate raw_model_code.
+        max_raw_model_len = 15 - len(prefix) - len(suffix_segment)
+        if max_raw_model_len < 0: max_raw_model_len = 0 
+
+        if len(raw_model_code) > max_raw_model_len:
+            raw_model_code = raw_model_code[:max_raw_model_len]
+        
+        model_code_segment = prefix + raw_model_code.upper()
+        padding_len = 15 - (len(model_code_segment) + len(suffix_segment))
+        padding_segment = "X" * padding_len if padding_len > 0 else ""
+
+    final_sku = model_code_segment + padding_segment + suffix_segment
+    
+    if len(final_sku) > 15:
+        final_sku = final_sku[:15]
+    elif len(final_sku) < 15:
+        final_sku = final_sku.ljust(15, 'X')
+
+    return final_sku.upper()
 
 @app.get("/scrape_all_foxway")
 async def scrape_all_foxway(request:Request, do_scrape: bool = False, caller: Optional[str] = None):
@@ -229,3 +339,120 @@ async def scrape_all_foxway(request:Request, do_scrape: bool = False, caller: Op
     return {"message": "API Scrape Completed"}
     
         
+
+@app.get("/download/latest_device_scrape_csv")
+async def download_latest_device_scrape_csv():
+    supabase_client = get_supabase_client()
+
+    # 1. Identify the latest scrape_instance
+    latest_log_response = (
+        supabase_client.table("logs")
+        .select("context, created_at")
+        .eq("log_level", "info")  # Assuming we want to filter by log level
+        .eq("source", "FastAPI - scrape_all_foxway")  # Filter by source
+        .not_.is_("context", "null") # Ensure context is not null
+        # .not_.is_("context->>'scrape_instance'", "null") # Check if scrape_instance key exists and is not null
+        .order("created_at", desc=True)
+        .limit(1)
+        .execute()
+    )
+
+    if not latest_log_response.data:
+        log_to_supabase("error", "No suitable log entry found to determine the latest scrape instance.", source="FastAPI - download_latest_device_scrape_csv")
+        return {"message": "No completed scrape instance found in logs."}
+
+    log_entry_data = latest_log_response.data[0]
+    latest_scrape_instance_id = log_entry_data.get("context", {}).get("scrape_instance")
+    log_created_at_str = log_entry_data.get("created_at")
+
+    if not latest_scrape_instance_id:
+        log_to_supabase("error", "Latest log entry found but does not contain a scrape_instance ID.", {"log_data": latest_log_response.data[0]}, source="FastAPI - download_latest_device_scrape_csv")
+        return {"message": "Latest scrape instance ID could not be determined."}
+
+    # 2. Retrieve device scrapes for the latest_scrape_instance_id
+    #    Selecting only the specified columns
+    columns_to_select = "make, model, storage_capacity, grade, purchase_price, stock_count, colour, ce_mark, partial_vat"
+    all_device_scrapes = []
+    page_size = 1000  # Align with suspected server-side limit
+    offset = 0
+    
+    while True:
+        current_page_response = (
+            supabase_client.table("raw_product_scrapes")
+            .select(columns_to_select)
+            .eq("scrape_instance", latest_scrape_instance_id)
+            .limit(page_size)
+            .offset(offset)
+            .execute()
+        )
+        
+        if current_page_response.data:
+            all_device_scrapes.extend(current_page_response.data)
+            if len(current_page_response.data) < page_size:
+                # Last page fetched
+                break
+            offset += page_size
+        else:
+            # No more data or an error occurred on this page
+            break
+
+    # 3. Format data as CSV
+    output = io.StringIO()
+    writer = csv.writer(output)
+
+    # Write header
+    header = ["make", "model", "storage_capacity", "grade", "purchase_price", "stock_count", "colour", "ce_mark", "partial_vat", "SKU"]
+    writer.writerow(header)
+
+    if not all_device_scrapes:
+        log_to_supabase("info", f"No device scrapes found for scrape_instance_id: {latest_scrape_instance_id}", source="FastAPI - download_latest_device_scrape_csv")
+        # Return an empty CSV if no data
+    else:
+        # Write data rows
+        for row_data in all_device_scrapes:
+            sku = generate_sku(
+                make=row_data.get("make"),
+                model_name=row_data.get("model"),
+                storage_capacity=row_data.get("storage_capacity"),
+                colour=row_data.get("colour"),
+                grade=row_data.get("grade")
+            )
+            writer.writerow([
+                row_data.get("make"),
+                row_data.get("model"),
+                row_data.get("storage_capacity"),
+                row_data.get("grade"),
+                row_data.get("purchase_price"),
+                row_data.get("stock_count"),
+                row_data.get("colour"),
+                row_data.get("ce_mark"),
+                row_data.get("partial_vat"),
+                sku,
+            ])
+    
+    output.seek(0) # Reset buffer position to the beginning
+
+    # 4. Serve the CSV file for download
+    if log_created_at_str:
+        # Supabase returns ISO 8601 format, e.g., "2023-10-26T10:30:00.123456+00:00"
+        try:
+            log_datetime = datetime.fromisoformat(log_created_at_str)
+            filename_timestamp = log_datetime.strftime("%Y%m%d_%H%M%S")
+        except ValueError:
+            # Fallback if parsing fails
+            filename_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            log_to_supabase("warning", f"Could not parse log_created_at: {log_created_at_str}. Using current time for filename.", source="FastAPI - download_latest_device_scrape_csv")
+    else:
+        # Fallback if created_at is not available
+        filename_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        log_to_supabase("warning", "log_created_at not found in log entry. Using current time for filename.", source="FastAPI - download_latest_device_scrape_csv")
+
+    filename = f"foxway_latest_device_scrape_{filename_timestamp}.csv"
+    
+    log_to_supabase("info", f"Successfully generated CSV for scrape_instance_id: {latest_scrape_instance_id}. Filename: {filename}", {"rows_exported": len(all_device_scrapes)}, source="FastAPI - download_latest_device_scrape_csv")
+
+    return StreamingResponse(
+        iter([output.getvalue()]), # iter() is used as StreamingResponse expects an iterator
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
