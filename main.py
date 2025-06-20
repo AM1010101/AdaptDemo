@@ -24,6 +24,8 @@ settings = get_settings()
 class SourceIDEnum(str, Enum):
     foxway = 'Foxway'
     komsa = 'Komsa'
+    compa = 'Compa'
+    dipli = 'Dipli'
     
 
 def get_supabase_client() -> Client:
@@ -263,6 +265,10 @@ async def download_latest_devices(source:SourceIDEnum):
         source_id = settings.FOXWAY_SUPABASE_ID
     elif source.lower() =='komsa':
         source_id = settings.KOMSA_SUPABASE_ID
+    elif source.lower() =='compa':
+        source_id = settings.COMPA_SUPABASE_ID
+    elif source.lower() == 'dipli':
+        source_id = settings.DIPLI_RECYCLE_SUPABASE_ID
     else:
         return {"message": "Invalid source specified.", "success": False}
     
@@ -773,38 +779,52 @@ async def scrape_all_compa_recycle():
     insert_rows = []
     for line in data.get('results', []):
         try:
-            manufacturer = line.get("make", "")
-            model = line.get("name", "")
-            storage = f'{line.get("gb", "")}GB' if line.get("gb") else "Unknown Storage"
-            colour = line.get("colour", "Unknown")
+            manufacturer = line.get("manufacturer", "")
+            if manufacturer.lower() not in ["apple", "samsung"]:
+                continue
 
-            # Each product has multiple grades, create a row for each
-            for grade_info in line.get("grades", []):
-                grade = grade_info.get("grade_name", "")
-                purchase_price = grade_info.get("price", 0)
-                stock_count = grade_info.get("stock", 0)
+            model = line.get("product_model", "")
+            
+            # Extract storage from 'product' field, e.g., "iPhone 11 64Go"
+            storage_match = re.search(r'(\d+)\s*(Go|GB)', line.get("product", ""), re.IGNORECASE)
+            storage = f"{storage_match.group(1)}GB" if storage_match else "Unknown Storage"
 
-                # Assuming these are not available in Compa data, set to default
-                ce_mark = None
-                partial_vat = False
-                trade_in_price = None
+            # These fields are not in the Compa data structure
+            colour = "Unknown"
+            stock_count = 0  # Defaulting to 0 as it's not available
+            ce_mark = None
+            partial_vat = False
+            trade_in_price = None
 
-                row = create_db_row(
-                    settings.COMPA_RECYCLE_SUPABASE_ID,  # Assumes this ID is in your settings
-                    scrape_instance,
-                    line,  # Original data for metadata
-                    manufacturer,
-                    model,
-                    storage,
-                    grade,
-                    colour,
-                    stock_count,
-                    ce_mark,
-                    partial_vat,
-                    trade_in_price,
-                    purchase_price
-                )
-                insert_rows.append(row)
+            # Iterate through the product's keys to find all available grades and their prices
+            for key, value in line.items():
+                # Match keys like "best price grade A", "best price grade B", etc.
+                match = re.match(r'best price grade (.+)', key)
+                if match:
+                    grade = match.group(1).strip()
+                    try:
+                        purchase_price = float(value)
+                    except (ValueError, TypeError):
+                        purchase_price = 0
+
+                    # Skip this grade if the purchase price is 0
+                    if purchase_price > 0:
+                        row = create_db_row(
+                            settings.COMPA_SUPABASE_ID,
+                            scrape_instance,
+                            line,  # Original data for metadata
+                            manufacturer,
+                            model,
+                            storage,
+                            grade,
+                            colour,
+                            stock_count,
+                            ce_mark,
+                            partial_vat,
+                            trade_in_price,
+                            purchase_price
+                        )
+                        insert_rows.append(row)
 
         except Exception as e:
             # Basic error logging
@@ -813,9 +833,10 @@ async def scrape_all_compa_recycle():
             # log_to_supabase("error", f"Error processing Compa line: {e}", {"line": line, "scrape_instance": scrape_instance}, source="FastAPI - scrape_all_compa_recycle")
 
     if insert_rows:
-        supabase_client = get_supabase_client()
-        response = supabase_client.table("raw_product_scrapes").insert(insert_rows).execute()
-        return response
+        # supabase_client = get_supabase_client()
+        # response = supabase_client.table("raw_product_scrapes").insert(insert_rows).execute()
+        # return response
+        print(len(insert_rows))
 
     return {"message": "Completed scrape, no data to insert."}
 
