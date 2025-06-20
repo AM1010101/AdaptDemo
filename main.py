@@ -92,6 +92,32 @@ def create_db_row(source_id, scrape_instance, line, manufacturer, model, storage
     return row
 
 
+def load_data_from_disk(filename):
+    json_filename = filename
+    with open(json_filename, "r") as f:
+        loaded_data = json.load(f)
+    return loaded_data
+    
+    
+def save_data_to_disk(data, source:str):
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"{source}_{timestamp}.csv"
+
+    if isinstance(data, list) and data:
+        # Flatten dicts if needed, or just use pandas for convenience
+        df = pd.DataFrame(data)
+        df.to_csv(filename, index=False)
+        print(f"Data saved to {filename}")
+        return filename 
+    else:
+        # Save as JSON if not a list of dicts
+        json_filename = f"{source}_{timestamp}.json"
+        with open(json_filename, "w") as f:
+            json.dump(data, f, indent=2)
+        print(f"Data saved to {json_filename}")
+        return json_filename
+
+
 async def scrape_foxway(manufacturer:str, partial_vat:bool, scrape_instance: Optional[uuid.UUID] = None):
     
     # lookup table for manufacturer_id
@@ -635,9 +661,6 @@ def parse_komsa_info(line):
     return manufacturer,model,storage,grade, colour
 
 
-async def scrape_all_compa_cycle():
-    pass
-
 @app.get("/scrape_all_dipli", tags=['Scrape'])
 async def scrape_all_dipli():
     
@@ -646,8 +669,8 @@ async def scrape_all_dipli():
     data = await get_dipli_data()
     
     # for testing if we dont want to continueously hit thier server
-    # filename = save_dipli_data_to_disk(data)
-    # loaded_data = load_dipli_data_from_disk(filename)
+    # filename = save_data_to_disk(data, 'dipli)
+    # loaded_data = load_data_from_disk(filename)
     
     insert_rows = []
     for line in data['result']: 
@@ -710,33 +733,6 @@ async def scrape_all_dipli():
     return response
 
 
-def load_dipli_data_from_disk(filename):
-    json_filename = filename
-    with open(json_filename, "r") as f:
-        loaded_data = json.load(f)
-    return loaded_data
-    
-    
-
-def save_dipli_data_to_disk(data):
-    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"dipli_{timestamp}.csv"
-
-    if isinstance(data, list) and data:
-        # Flatten dicts if needed, or just use pandas for convenience
-        df = pd.DataFrame(data)
-        df.to_csv(filename, index=False)
-        print(f"Data saved to {filename}")
-        return filename 
-    else:
-        # Save as JSON if not a list of dicts
-        json_filename = f"dipli_{timestamp}.json"
-        with open(json_filename, "w") as f:
-            json.dump(data, f, indent=2)
-        print(f"Data saved to {json_filename}")
-        return json_filename
-
-
 async def get_dipli_data():
     api_key = settings.DIPLI_RECYCLE_API_KEY
     page_size = 100
@@ -762,6 +758,83 @@ async def get_dipli_data():
 
     # Return the full data structure, or just the results if you prefer
     return {"result": all_results}
+
+
+@app.get("/scrape_all_compa_recycle", tags=['Scrape'])
+async def scrape_all_compa_recycle():
+    
+    scrape_instance = uuid.uuid4()
+    data = await get_compa_data()
+    
+    # For testing, you can save and load from disk
+    # filename = save_data_to_disk(data, 'compa_recycle')
+    # data = load_data_from_disk(filename)
+
+    insert_rows = []
+    for line in data.get('results', []):
+        try:
+            manufacturer = line.get("make", "")
+            model = line.get("name", "")
+            storage = f'{line.get("gb", "")}GB' if line.get("gb") else "Unknown Storage"
+            colour = line.get("colour", "Unknown")
+
+            # Each product has multiple grades, create a row for each
+            for grade_info in line.get("grades", []):
+                grade = grade_info.get("grade_name", "")
+                purchase_price = grade_info.get("price", 0)
+                stock_count = grade_info.get("stock", 0)
+
+                # Assuming these are not available in Compa data, set to default
+                ce_mark = None
+                partial_vat = False
+                trade_in_price = None
+
+                row = create_db_row(
+                    settings.COMPA_RECYCLE_SUPABASE_ID,  # Assumes this ID is in your settings
+                    scrape_instance,
+                    line,  # Original data for metadata
+                    manufacturer,
+                    model,
+                    storage,
+                    grade,
+                    colour,
+                    stock_count,
+                    ce_mark,
+                    partial_vat,
+                    trade_in_price,
+                    purchase_price
+                )
+                insert_rows.append(row)
+
+        except Exception as e:
+            # Basic error logging
+            print(f"Error processing line {line}: {e}")
+            # For production, consider logging to Supabase as in other scrapers
+            # log_to_supabase("error", f"Error processing Compa line: {e}", {"line": line, "scrape_instance": scrape_instance}, source="FastAPI - scrape_all_compa_recycle")
+
+    if insert_rows:
+        supabase_client = get_supabase_client()
+        response = supabase_client.table("raw_product_scrapes").insert(insert_rows).execute()
+        return response
+
+    return {"message": "Completed scrape, no data to insert."}
+
+
+async def get_compa_data():
+    url = f"{settings.COMPA_URL}/Argus/getList"
+    headers = {
+        "accept": "application/json",
+        "X-PUBLIC-API-KEY": settings.COMPA_PUBLIC_KEY,
+        "X-PRIVATE-API-KEY": settings.COMPA_PRIVATE_KEY,
+    }
+
+    async with httpx.AsyncClient() as client:
+        response = await client.get(url, headers=headers)
+        response.raise_for_status()
+        
+        data = response.json()
+    return data
+  
 
 
 async def scrape_all_callisto():

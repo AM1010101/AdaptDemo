@@ -12,6 +12,10 @@ class Settings(BaseSettings):
     DIPLI_RECYCLE_API_KEY:str
     DIPLI_RECYCLE_URL:str
     DIPLI_RECYCLE_SUPABASE_ID:str
+    COMPA_URL:str
+    COMPA_PUBLIC_KEY:str
+    COMPA_PRIVATE_KEY:str
+    COMPA_SUPABASE_ID:str
     
     class Config:
         env_file = ".env"
