@@ -4,3 +4,8 @@ httpx==0.28.1
 supabase==2.15.2
 pydantic
 pydantic-settings
+requests
+pandas==2.3.0
+
+# openpyxl
+# pandas
