@@ -244,6 +244,22 @@ async def write_scrape_to_supabase(manufacturer:str, partial_vat:bool, data:dict
     return response
 
           
+@app.get("/scrape_all", tags=['Scrape'])
+async def scrape_all(request:Request, do_scrape: bool = False, caller: Optional[str] = None):
+    
+    #scrape foxway
+    await scrape_all_foxway(request= request, do_scrape = do_scrape, caller = caller)
+    
+    # scrape Komsa
+    await scrape_all_komsa(request= request, do_scrape = do_scrape, caller = caller)
+    
+    # scrape dipili
+    # await scrape_all_dipli()
+    
+    # scrape compa recycle
+    await scrape_all_compa_recycle()
+    
+
 @app.get("/scrape_all_foxway", tags=['Scrape'])
 async def scrape_all_foxway(request:Request, do_scrape: bool = False, caller: Optional[str] = None):
     caller = caller or "Unknown Caller"
