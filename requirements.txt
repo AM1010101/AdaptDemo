@@ -6,6 +6,8 @@ pydantic
 pydantic-settings
 requests
 pandas==2.3.0
+pydantic-ai
 
 # openpyxl
 # pandas
+Jinja2

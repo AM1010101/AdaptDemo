@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Text Parser</title>
+    <!-- Tailwind CSS for a modern, responsive design -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* A simple spinner animation for loading states */
+        .spinner {
+            border: 4px solid rgba(0, 0, 0, 0.1);
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            border-left-color: #4f46e5; /* Indigo */
+            animation: spin 1s ease infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        /* Style for the preformatted JSON block */
+        pre {
+            white-space: pre-wrap;       /* Since CSS 2.1 */
+            white-space: -moz-pre-wrap;  /* Mozilla, since 1999 */
+            white-space: -pre-wrap;      /* Opera 4-6 */
+            white-space: -o-pre-wrap;    /* Opera 7 */
+            word-wrap: break-word;       /* Internet Explorer 5.5+ */
+        }
+    </style>
+</head>
+<body class="bg-gray-100 font-sans">
+    <div class="mx-auto p-4 sm:p-6 md:p-8 max-w-4xl container">
+        
+        <header class="mb-8 text-center">
+            <h1 class="font-bold text-gray-800 text-4xl">AI Text Parser</h1>
+            <p class="mt-2 text-gray-600">Paste your unstructured text below to convert it into a structured table.</p>
+        </header>
+
+        <main class="bg-white shadow-md p-6 rounded-lg">
+            <!-- The form for user input -->
+            <form id="parser-form" class="space-y-6">
+                <div>
+                    <label for="context-prompt" class="block mb-1 font-medium text-gray-700 text-sm">Supplier (Optional)</label>
+                    <input type="text" id="context-prompt" class="shadow-sm px-3 py-2 border border-gray-300 focus:border-indigo-500 rounded-md focus:outline-none focus:ring-indigo-500 w-full" placeholder="e.g., 'Extract all iPhone models'">
+                </div>
+                
+                <div>
+                    <label for="main-prompt" class="block mb-1 font-medium text-gray-700 text-sm">Unstructured Text</label>
+                    <textarea id="main-prompt" rows="10" class="shadow-sm px-3 py-2 border border-gray-300 focus:border-indigo-500 rounded-md focus:outline-none focus:ring-indigo-500 w-full" placeholder="GRADE A+/A 14 128gb: 349€ ..."></textarea>
+                </div>
+
+                <div>
+                    <label class="block mb-1 font-medium text-gray-700 text-sm">Load an example:</label>
+                    <div class="flex space-x-2">
+                        <button type="button" id="example-btn-1" class="bg-gray-200 hover:bg-gray-300 px-3 py-1 rounded-md font-bold text-gray-800 text-sm">Apple List</button>
+                        <button type="button" id="example-btn-2" class="bg-gray-200 hover:bg-gray-300 px-3 py-1 rounded-md font-bold text-gray-800 text-sm">Samsung List</button>
+                        <button type="button" id="example-btn-3" class="bg-gray-200 hover:bg-gray-300 px-3 py-1 rounded-md font-bold text-gray-800 text-sm">Mixed List</button>
+                        <button type="button" id="example-btn-4" class="bg-gray-200 hover:bg-gray-300 px-3 py-1 rounded-md font-bold text-gray-800 text-sm">WhatsApp 1</button>
+                        <button type="button" id="example-btn-5" class="bg-gray-200 hover:bg-gray-300 px-3 py-1 rounded-md font-bold text-gray-800 text-sm">WhatsApp 2</button>
+                    </div>
+                </div>
+                
+                <div class="flex justify-end items-center">
+                    <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 px-4 py-2 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 font-bold text-white transition duration-150 ease-in-out">
+                        Parse Text
+                    </button>
+                </div>
+            </form>
+        </main>
+
+        <!-- Section to display results -->
+        <section id="results-section" class="hidden bg-white shadow-md mt-8 p-6 rounded-lg">
+            <h2 class="mb-4 font-bold text-gray-800 text-2xl">Parsed Results</h2>
+            
+            <!-- Tab Navigation -->
+            <div class="border-gray-200 border-b">
+                <nav class="flex space-x-8 -mb-px" aria-label="Tabs">
+                    <button id="tab-table" class="px-1 py-4 border-indigo-500 border-b-2 font-medium text-indigo-600 text-sm whitespace-nowrap">
+                        Table View
+                    </button>
+                    <button id="tab-json" class="px-1 py-4 hover:border-gray-300 border-transparent border-b-2 font-medium text-gray-500 hover:text-gray-700 text-sm whitespace-nowrap">
+                        Raw JSON
+                    </button>
+                </nav>
+            </div>
+
+            <!-- Loading spinner -->
+            <div id="loading-indicator" class="hidden flex justify-center items-center py-8">
+                <div class="spinner"></div>
+                <p class="ml-4 text-gray-600">AI is processing your request...</p>
+            </div>
+            <!-- Error message container -->
+            <div id="error-message" class="hidden relative bg-red-100 my-4 px-4 py-3 border border-red-400 rounded text-red-700" role="alert"></div>
+            
+            <!-- Tab Content Panes -->
+            <div id="tab-content-table" class="mt-4 overflow-x-auto">
+                 <!-- Table will be injected here by JavaScript -->
+            </div>
+            <div id="tab-content-json" class="hidden mt-4">
+                <pre class="bg-gray-800 p-4 rounded-md overflow-x-auto text-white"><code id="json-output"></code></pre>
+            </div>
+        </section>
+    </div>
+
+    <script>
+        // DOM element references
+        const form = document.getElementById('parser-form');
+        const mainPromptInput = document.getElementById('main-prompt');
+        const resultsSection = document.getElementById('results-section');
+        const loadingIndicator = document.getElementById('loading-indicator');
+        const errorMessage = document.getElementById('error-message');
+        
+        // Tab-related elements
+        const tabTableBtn = document.getElementById('tab-table');
+        const tabJsonBtn = document.getElementById('tab-json');
+        const tableContentContainer = document.getElementById('tab-content-table');
+        const jsonContentContainer = document.getElementById('tab-content-json');
+        const jsonOutput = document.getElementById('json-output');
+
+        // Example buttons and data
+        const exampleBtn1 = document.getElementById('example-btn-1');
+        const exampleBtn2 = document.getElementById('example-btn-2');
+        const exampleBtn3 = document.getElementById('example-btn-3');
+        const exampleBtn4 = document.getElementById('example-btn-4');
+        const exampleBtn5 = document.getElementById('example-btn-5');
+
+        const exampleTexts = {
+            apple: `iPhone 13, 128GB, Grade A, £500
+iPhone 14 Pro, 256GB, Grade B, £750
+iPhone 12 Mini, 64GB, Grade A+, £350`,
+            samsung: `Samsung Galaxy S22, 128GB, Very Good, 450 EUR
+Samsung Galaxy S23 Ultra, 512GB, Like New, 900 EUR`,
+            mixed: `Google Pixel 7 - 128gb - Mint Condition - $400
+Sony Xperia 1 IV | 256gb | Good | $600`,
+            WhatsApp1: `GRADE A+/A
+
+14 128gb: 349€
+14 pro 512gb: 539€
+14 pro 1TB: 589€
+15 256gb: 539€ (ASIS+ non activated. 100% battery)
+15 pro 1TB: 739€
+15 pro max 512gb: 789€
+16 128gb: 589€
+16 256gb: 649€
+16 pro 512gb: 869€
+16 pro 1TB: 969€
+16 pro Max 512gb: 1059€
+
+
+GRADE AB
+
+14 128gb: 329€
+15 plus 128gb: 489€
+15 pro Max 256gb: 729€
+15 pro max 512gb: 769€
+
+
+ASIS+
+Eu- Spec
+
+15 128gb: 479€
+15 256gb: 509€`,
+WhatsApp2: `📅 JUNE 24, 2025
+🏢 LEADING EDGE DAFZA K15
+
+━━━━━━━━━━━━━━━
+🔰 P1+ / A+ GRADE TESTED
+━━━━━━━━━━━━━━━
+📱 15 128GB – 500 pcs
+📱 14 Pro Max 128GB – 62 pcs
+📱 14 Plus 256GB – 81 pcs
+📱 14 256GB – 100 pcs
+📱 12 mini 64GB – 144 pcs
+📱 12 64GB – 368 pcs
+📱 12 128GB – 72 pcs
+📱 11 64GB – 86 pcs
+
+━━━━━━━━━━━━━━━
+🔰 P2+ / A GRADE TESTED
+━━━━━━━━━━━━━━━
+📱 15 128GB – 500 pcs
+📱 14 Pro Max 128GB – 64 pcs
+📱 14 Plus 256GB – 160 pcs
+📱 14 Plus 128GB – 153 pcs
+📱 14 256GB – 145 pcs
+📱 14 128GB – 120 pcs
+📱 13 Pro Max 128GB – 77 pcs
+📱 13 mini 128GB – 134 pcs
+📱 12 mini 64GB – 197 pcs
+📱 12 mini 128GB – 64 pcs
+📱 12 64GB – 115 pcs
+📱 12 128GB – 166 pcs
+📱 11 64GB – 246 pcs
+📱 SE 3rd Gen 64GB – 130 pcs
+
+━━━━━━━━━━━━━━━
+🔰 P3+ / B GRADE TESTED
+━━━━━━━━━━━━━━━
+📱 15 128GB – 500 pcs
+📱 14 256GB – 64 pcs
+📱 14 128GB – 266 pcs
+📱 13 Pro Max 256GB – 62 pcs
+📱 13 Pro Max 128GB – 190 pcs
+📱 13 Pro 256GB – 84 pcs
+📱 13 256GB – 52 pcs
+📱 13 128GB – 128 pcs
+📱 12 Pro Max 256GB – 101 pcs
+📱 12 Pro Max 128GB – 107 pcs
+📱 12 mini 64GB – 139 pcs
+📱 12 mini 128GB – 161 pcs
+📱 12 64GB – 64 pcs
+📱 11 Pro Max 512GB – 70 pcs
+📱 11 64GB – 133 pcs
+📱 7 128GB – 67 pcs
+
+━━━━━━━━━━━━━━━
+🇯🇵 JAPAN SOFTBANK UG
+━━━━━━━━━━━━━━━
+📱 15 128GB – 500 pcs
+📱 14 Pro Max 256GB – 210 pcs
+📱 14 Pro Max 128GB – 193 pcs
+📱 14 Plus 512GB – 118 pcs
+📱 14 Plus 256GB – 208 pcs
+📱 14 Plus 128GB – 146 pcs
+📱 14 512GB – 111 pcs
+📱 14 256GB – 970 pcs
+📱 14 128GB – 2250 pcs
+📱 13 Pro Max 256GB – 190 pcs
+📱 13 Pro Max 128GB – 219 pcs
+📱 13 Pro 256GB – 375 pcs
+📱 13 Pro 128GB – 394 pcs
+📱 13 mini 256GB – 123 pcs
+📱 13 mini 128GB – 500 pcs
+📱 13 256GB – 340 pcs
+📱 12 Pro Max 256GB – 181 pcs
+📱 12 Pro Max 128GB – 105 pcs
+📱 12 Pro 256GB – 101 pcs
+📱 12 Pro 128GB – 108 pcs
+📱 12 mini 64GB – 500 pcs
+📱 12 mini 128GB – 500 pcs
+📱 12 64GB – 500 pcs
+📱 12 256GB – 221 pcs
+📱 12 128GB – 500 pcs
+📱 SE 3rd Gen 128GB – 211 pcs
+📱 8 256GB – 118 pcs`
+        };
+
+        exampleBtn1.addEventListener('click', () => {
+            mainPromptInput.value = exampleTexts.apple;
+        });
+        exampleBtn2.addEventListener('click', () => {
+            mainPromptInput.value = exampleTexts.samsung;
+        });
+        exampleBtn3.addEventListener('click', () => {
+            mainPromptInput.value = exampleTexts.mixed;
+        });
+        exampleBtn4.addEventListener('click', () => {
+            mainPromptInput.value = exampleTexts.WhatsApp1;
+        });
+        exampleBtn5.addEventListener('click', () => {
+            mainPromptInput.value = exampleTexts.WhatsApp2;
+        });
+
+        // Form submission handler
+        form.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            const promptText = mainPromptInput.value.trim();
+            if (!promptText) {
+                alert('Please enter some text to parse.');
+                return;
+            }
+
+            // Reset UI for new submission
+            resultsSection.classList.remove('hidden');
+            loadingIndicator.classList.remove('hidden');
+            errorMessage.classList.add('hidden');
+            tableContentContainer.innerHTML = '';
+            jsonOutput.textContent = '';
+            activateTab('table'); // Default to table view
+
+            try {
+                // Fetch data from API
+                const apiUrl = `/parse_text_with_ai?prompt=${encodeURIComponent(promptText)}`;
+                const response = await fetch(apiUrl, {
+                    method: 'GET',
+                    headers: { 'accept': 'application/json' }
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                const data = await response.json();
+                
+                // Render results into both tabs
+                renderTable(data);
+                renderJson(data);
+
+            } catch (error) {
+                console.error('Error fetching or parsing data:', error);
+                errorMessage.textContent = 'Failed to parse text. Please check the console for details or try again later.';
+                errorMessage.classList.remove('hidden');
+            } finally {
+                loadingIndicator.classList.add('hidden');
+            }
+        });
+
+        // Tab switching logic
+        tabTableBtn.addEventListener('click', () => activateTab('table'));
+        tabJsonBtn.addEventListener('click', () => activateTab('json'));
+        
+        function activateTab(tabName) {
+            const isTableTab = tabName === 'table';
+
+            // Toggle content visibility
+            tableContentContainer.classList.toggle('hidden', !isTableTab);
+            jsonContentContainer.classList.toggle('hidden', isTableTab);
+
+            // Toggle active styles for table tab button
+            tabTableBtn.classList.toggle('border-indigo-500', isTableTab);
+            tabTableBtn.classList.toggle('text-indigo-600', isTableTab);
+            tabTableBtn.classList.toggle('border-transparent', !isTableTab);
+            tabTableBtn.classList.toggle('text-gray-500', !isTableTab);
+
+            // Toggle active styles for JSON tab button
+            tabJsonBtn.classList.toggle('border-indigo-500', !isTableTab);
+            tabJsonBtn.classList.toggle('text-indigo-600', !isTableTab);
+            tabJsonBtn.classList.toggle('border-transparent', isTableTab);
+            tabJsonBtn.classList.toggle('text-gray-500', isTableTab);
+        }
+
+        // Renders the data into a table
+        function renderTable(data) {
+            if (!data || data.length === 0) {
+                tableContentContainer.innerHTML = '<p class="text-gray-500">No data could be parsed from the provided text.</p>';
+                return;
+            }
+            const table = document.createElement('table');
+            table.className = 'min-w-full divide-y divide-gray-200';
+            table.innerHTML = `
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th scope="col" class="px-6 py-3 font-medium text-gray-500 text-xs text-left uppercase tracking-wider">Make</th>
+                        <th scope="col" class="px-6 py-3 font-medium text-gray-500 text-xs text-left uppercase tracking-wider">Model</th>
+                        <th scope="col" class="px-6 py-3 font-medium text-gray-500 text-xs text-left uppercase tracking-wider">Storage</th>
+                        <th scope="col" class="px-6 py-3 font-medium text-gray-500 text-xs text-left uppercase tracking-wider">Grade</th>
+                        <th scope="col" class="px-6 py-3 font-medium text-gray-500 text-xs text-left uppercase tracking-wider">Price</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200">
+                    ${data.map(item => `
+                        <tr>
+                            <td class="px-6 py-4 font-medium text-gray-900 text-sm whitespace-nowrap">${item.make || 'N/A'}</td>
+                            <td class="px-6 py-4 font-medium text-gray-900 text-sm whitespace-nowrap">${item.model || 'N/A'}</td>
+                            <td class="px-6 py-4 text-gray-500 text-sm whitespace-nowrap">${item.storage_capacity || 'N/A'}</td>
+                            <td class="px-6 py-4 text-gray-500 text-sm whitespace-nowrap">
+                                <span class="inline-flex bg-green-100 px-2 rounded-full font-semibold text-green-800 text-xs leading-5">
+                                    ${item.grade || 'N/A'}
+                                </span>
+                            </td>
+                            <td class="px-6 py-4 text-gray-500 text-sm whitespace-nowrap">€${item.purchase_price.toFixed(2)}</td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            `;
+            tableContentContainer.appendChild(table);
+        }
+
+        // Renders the data as a formatted JSON string
+        function renderJson(data) {
+            if (!data) {
+                jsonOutput.textContent = 'No JSON data available.';
+                return;
+            }
+            jsonOutput.textContent = JSON.stringify(data, null, 2); // Pretty-print with 2-space indentation
+        }
+    </script>
+</body>
+</html>

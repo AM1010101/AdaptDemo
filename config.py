@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     COMPA_PUBLIC_KEY:str
     COMPA_PRIVATE_KEY:str
     COMPA_SUPABASE_ID:str
+    GEMINI_API_KEY:str
     
     class Config:
         env_file = ".env"

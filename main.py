@@ -1,10 +1,12 @@
 from fastapi import FastAPI, Request
+from fastapi.staticfiles import StaticFiles
+from models import RawProductScrapeMeta, RawProductScrape
 import re
 import httpx
 import json
 from supabase import create_client, Client
 from config import  get_settings
-from typing import Optional
+from typing import Optional, List
 import uuid
 from fastapi.responses import StreamingResponse
 import csv
@@ -15,10 +17,14 @@ from io import BytesIO
 from urllib.parse import urlparse, parse_qs
 from enum import Enum
 import datetime
+from ui import router
 
 
 app = FastAPI()
 settings = get_settings()
+
+app.include_router(router)
+app.mount("/templates", StaticFiles(directory="templates"), name="templates")
 
 
 class SourceIDEnum(str, Enum):
@@ -43,6 +49,24 @@ def log_to_supabase(log_level: str, message: str, context: Optional[dict] = None
     }
     response = supabase_client.table("logs").insert(log_entry).execute()
     return response
+
+
+@app.get("/download/lookup_table", tags=['Download'])
+def get_sku_lookup_table():
+    sheet_id = '1B1TLvZJoP8TRpJnek7oc_f5j6KvbdCqE4tJ2rqH99Fw'
+    sheet_gid = '0' # e.g., '0' for the first sheet
+
+    export_url = f'https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={sheet_gid}'
+
+    try:
+        response = requests.get(export_url)
+        response.raise_for_status()  # Raises an exception for HTTP errors
+
+        csv_data_string = response.text
+        return csv_data_string
+    except Exception as e:
+        print(e)
+        
 
 
 def fetch_excel_as_df(excel_url: str) -> pd.DataFrame:
@@ -73,24 +97,11 @@ def fetch_excel_as_df(excel_url: str) -> pd.DataFrame:
     return df
 
 
-def create_db_row(source_id, scrape_instance, line, manufacturer, model, storage, grade, colour, stock_count, ce_mark, partial_vat, trade_in_price, purchase_price):
-    
-    row = {
-                "source_id": source_id, 
-                "make": manufacturer, 
-                "model": model,
-                "storage_capacity": storage.upper(), 
-                "grade": grade, 
-                "colour": colour,
-                "ce_mark": ce_mark, 
-                "partial_vat": partial_vat, 
-                "purchase_price": purchase_price,
-                "trade_in_price": trade_in_price, 
-                "stock_count": stock_count ,
-                "meta_data": json.dumps(line),  
-                "scrape_instance": str(scrape_instance) if scrape_instance else None,
-            }
-    
+def create_db_row(data: RawProductScrape):
+    """Creates a dictionary for a database row from a RawProductScrape model."""
+    row = data.dict()
+    # Ensure storage_capacity is uppercase
+    row['storage_capacity'] = row['storage_capacity'].upper()
     return row
 
 
@@ -374,6 +385,35 @@ def get_devices_by_scrape_id(scrape_instance_id):
 # Placeholder for a more robust model code generation/lookup
 # This will be the most complex part to get right and will need your detailed rules/mappings
 def get_model_code(make: str, model_name: str) -> str:
+    
+    model_code_csv = get_sku_lookup_table()
+    
+    
+    example_model_codes = '''
+    make,model,Adapt SKU
+    apple,iPhone 11,IP11X
+    apple,iPhone 11 Pro,IP11P
+    apple,iPhone 11 Pro Max,IP11PM
+    apple,iPhone 12,IP12X
+    apple,iPhone 12 Mini,IP12M
+    apple,iPhone 12 Pro,IP12P
+    apple,iPhone 12 Pro Max,IP12PM
+    apple,iPhone 13,IP13X
+    apple,iPhone 13 Mini,IP13M
+    apple,iPhone 13 Pro,IP13P
+    apple,iPhone 13 Pro Max,IP13PM
+    apple,iPhone 14,IP14X
+    apple,iPhone 14 (USA),
+    apple,iPhone 14 Plus,IP14PL
+    apple,iPhone 14 Plus (USA),
+    apple,iPhone 14 Pro,IP14P
+    apple,iPhone 14 Pro (USA),
+    apple,iPhone 14 Pro Max,IP14PM
+    apple,iPhone 14 Pro Max (USA),
+    apple,iPhone 15,IP15X
+    apple,iPhone 15 (USA),
+    '''
+    
     make_lower = make.lower()
     model_lower = model_name.lower()
     
@@ -490,11 +530,11 @@ async def scrape_all_komsa(request: Request, do_scrape: bool = False, caller: Op
     scrape_instance = uuid.uuid4()  #uuid
     
     # Placeholder for actual scraping logic
-    # log_to_supabase("info", "Scraping Komsa initiated", {"do_scrape": do_scrape, "request_client": str(request.client), "caller": caller, "scrape_instrance":scrape_instance}, source="FastAPI - scrape_all_komsa")
+    log_to_supabase("info", "Scraping Komsa initiated", {"do_scrape": do_scrape, "request_client": str(request.client), "caller": caller, "scrape_instrance":scrape_instance}, source="FastAPI - scrape_all_komsa")
     
     # Simulate scraping process
     await scrape_komsa_excel(str(scrape_instance))
-    # log_to_supabase("info", "Scraping Komsa completed", {"do_scrape": do_scrape, "request_client": str(request.client), "caller": caller}, source="FastAPI - scrape_all_komsa")
+    log_to_supabase("info", "Scraping Komsa completed", {"do_scrape": do_scrape, "request_client": str(request.client), "caller": caller}, source="FastAPI - scrape_all_komsa")
     return {"message": "Komsa scrape completed successfully."}
 
 
@@ -529,9 +569,25 @@ async def scrape_komsa_excel(scrape_instance:str):
                 if isinstance(stock_count, str):
                     stock_count = re.sub(r'\D', '', stock_count)
                     stock_count = int(stock_count) if stock_count.isdigit() else 0
+                    
+                row_data = RawProductScrape(
+                    source_id=settings.KOMSA_SUPABASE_ID,
+                    make=manufacturer,
+                    model=model,
+                    storage_capacity=storage,
+                    grade=grade,
+                    colour=colour,
+                    ce_mark=None,
+                    partial_vat=False,
+                    purchase_price=line["purchase_price"],
+                    trade_in_price=None,
+                    stock_count=stock_count,
+                    meta_data=json.dumps(line),
+                    scrape_instance=str(scrape_instance) if scrape_instance else None,
+                )
 
                 # append the row to the insert list
-                row = create_db_row(settings.KOMSA_SUPABASE_ID, scrape_instance, line, manufacturer, model, storage, grade, colour, stock_count, ce_mark = None, partial_vat = False, trade_in_price = None, purchase_price=line["purchase_price"])
+                row = create_db_row(data=row_data)
                 insert_rows.append(row)
                 
             except Exception as e:
@@ -667,7 +723,7 @@ def parse_komsa_info(line):
     return manufacturer,model,storage,grade, colour
 
 
-@app.get("/scrape_all_dipli", tags=['Scrape'])
+@app.get("/scrape_dipli", tags=['Scrape'])
 async def scrape_all_dipli():
     
     scrape_instance = uuid.uuid4()
@@ -723,7 +779,22 @@ async def scrape_all_dipli():
             partial_vat = False
             trade_in_price = None
 
-            row = create_db_row(settings.DIPLI_RECYCLE_SUPABASE_ID, scrape_instance, line, manufacturer, model, storage, grade, colour, stock_count, ce_mark, partial_vat, trade_in_price, purchase_price)
+            db_row_data = RawProductScrape(
+                source_id=settings.DIPLI_RECYCLE_SUPABASE_ID,
+                make=manufacturer,
+                model=model,
+                storage_capacity=storage,
+                grade=grade,
+                colour=colour,
+                ce_mark=ce_mark,
+                partial_vat=partial_vat,
+                purchase_price=purchase_price,
+                trade_in_price=trade_in_price,
+                stock_count=stock_count,
+                meta_data=json.dumps(line),
+                scrape_instance=str(scrape_instance) if scrape_instance else None,
+            )
+            row = create_db_row(data=db_row_data)
             insert_rows.append(row)
             
         except Exception as e:
@@ -766,7 +837,7 @@ async def get_dipli_data():
     return {"result": all_results}
 
 
-@app.get("/scrape_all_compa_recycle", tags=['Scrape'])
+@app.get("/scrape_compa_recycle", tags=['Scrape'])
 async def scrape_all_compa_recycle():
     
     scrape_instance = uuid.uuid4()
@@ -809,21 +880,22 @@ async def scrape_all_compa_recycle():
 
                     # Skip this grade if the purchase price is 0
                     if purchase_price > 0:
-                        row = create_db_row(
-                            settings.COMPA_SUPABASE_ID,
-                            scrape_instance,
-                            line,  # Original data for metadata
-                            manufacturer,
-                            model,
-                            storage,
-                            grade,
-                            colour,
-                            stock_count,
-                            ce_mark,
-                            partial_vat,
-                            trade_in_price,
-                            purchase_price
+                        db_row_data = RawProductScrape(
+                            source_id=settings.COMPA_SUPABASE_ID,
+                            make=manufacturer,
+                            model=model,
+                            storage_capacity=storage,
+                            grade=grade,
+                            colour=colour,
+                            ce_mark=ce_mark,
+                            partial_vat=partial_vat,
+                            purchase_price=purchase_price,
+                            trade_in_price=trade_in_price,
+                            stock_count=stock_count,
+                            meta_data=json.dumps(line),
+                            scrape_instance=str(scrape_instance) if scrape_instance else None,
                         )
+                        row = create_db_row(data=db_row_data)
                         insert_rows.append(row)
 
         except Exception as e:
@@ -858,5 +930,25 @@ async def get_compa_data():
   
 
 
-async def scrape_all_callisto():
+async def scrape_callisto():
     pass
+
+
+@app.get("/parse_text_with_ai", tags=['AI'])
+async def parse_text_with_ai(prompt:str, supplier:Optional[ str| None] = None):
+    '''This endpoint take the input'''
+    from agents import agent, get_deps    
+    
+    scrape_instance = uuid.uuid4()  #uuid
+    
+    deps = get_deps('str','str')
+    
+    result = await agent.run(
+        deps= deps,
+        user_prompt=prompt
+    )
+    
+    # insert the results
+    # print(result.output)
+    
+    return result.output
